@@ -4,13 +4,35 @@ const axios = require('axios');
 const pino = require('pino');
 const http = require('http');
 const QRCode = require('qrcode');
+const fs = require('fs');
 
 let currentQR = null;
 let botStatus = 'starting';
 const conversationHistory = {};
 
 // ─────────────────────────────────────────
-// WEB SERVER
+// GROQ + OPENROUTER MODELS LIST
+// ─────────────────────────────────────────
+const GROQ_MODELS = [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'llama3-70b-8192',
+    'llama3-8b-8192',
+    'gemma2-9b-it',
+    'mixtral-8x7b-32768'
+];
+
+const OPENROUTER_MODELS = [
+    'meta-llama/llama-3.1-8b-instruct:free',
+    'meta-llama/llama-3.2-3b-instruct:free',
+    'microsoft/phi-3-mini-128k-instruct:free',
+    'google/gemma-2-9b-it:free',
+    'mistralai/mistral-7b-instruct:free',
+    'openchat/openchat-7b:free'
+];
+
+// ─────────────────────────────────────────
+// WEB SERVER - QR Show Karne Ke Liye
 // ─────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
     if (req.url === '/qr') {
@@ -84,9 +106,14 @@ const server = http.createServer(async (req, res) => {
         } catch (err) {
             res.end('<h1 style="color:red">QR Error: ' + err.message + '</h1>');
         }
+
     } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: botStatus, hasQR: !!currentQR, qrUrl: '/qr' }));
+        res.end(JSON.stringify({
+            status: botStatus,
+            hasQR: !!currentQR,
+            qrUrl: '/qr'
+        }));
     }
 });
 
@@ -96,19 +123,20 @@ server.listen(process.env.PORT || 3000, () => {
 });
 
 // ─────────────────────────────────────────
-// AI FUNCTIONS
+// AI FUNCTIONS — SMART FALLBACK
 // ─────────────────────────────────────────
-async function getGroqResponse(userMessage, userId) {
+async function tryGroqModel(model, userMessage, userId) {
     try {
         if (!conversationHistory[userId]) conversationHistory[userId] = [];
         conversationHistory[userId].push({ role: 'user', content: userMessage });
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
         }
+
         const response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: 'llama3-70b-8192',
+                model: model,
                 messages: [
                     {
                         role: 'system',
@@ -123,29 +151,37 @@ async function getGroqResponse(userMessage, userId) {
                 headers: {
                     'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 15000
             }
         );
+
         const assistantMessage = response.data.choices[0].message.content;
         conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
+        console.log(`✅ Groq kaam kiya: ${model}`);
         return assistantMessage;
+
     } catch (error) {
-        console.error('Groq Error:', error.response?.data || error.message);
-        return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
+        console.log(`❌ Groq fail: ${model} — ${error.response?.data?.error?.message || error.message}`);
+        if (conversationHistory[userId]) {
+            conversationHistory[userId].pop();
+        }
+        return null;
     }
 }
 
-async function getOpenRouterResponse(userMessage, userId) {
+async function tryOpenRouterModel(model, userMessage, userId) {
     try {
         if (!conversationHistory[userId]) conversationHistory[userId] = [];
         conversationHistory[userId].push({ role: 'user', content: userMessage });
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
         }
+
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                model: 'meta-llama/llama-3.1-8b-instruct:free',
+                model: model,
                 messages: [
                     {
                         role: 'system',
@@ -162,22 +198,47 @@ async function getOpenRouterResponse(userMessage, userId) {
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://github.com/whatsapp-ai-bot',
                     'X-Title': 'WhatsApp AI Bot'
-                }
+                },
+                timeout: 15000
             }
         );
+
         const assistantMessage = response.data.choices[0].message.content;
         conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
+        console.log(`✅ OpenRouter kaam kiya: ${model}`);
         return assistantMessage;
+
     } catch (error) {
-        console.error('OpenRouter Error:', error.response?.data || error.message);
-        return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
+        console.log(`❌ OpenRouter fail: ${model} — ${error.response?.data?.error?.message || error.message}`);
+        if (conversationHistory[userId]) {
+            conversationHistory[userId].pop();
+        }
+        return null;
     }
 }
 
 async function getAIResponse(userMessage, userId) {
-    const provider = process.env.AI_PROVIDER || 'groq';
-    if (provider === 'openrouter') return await getOpenRouterResponse(userMessage, userId);
-    return await getGroqResponse(userMessage, userId);
+    console.log(`🧠 AI response dhund raha hai...`);
+
+    // STEP 1: Sare Groq models try karo
+    for (const model of GROQ_MODELS) {
+        console.log(`🔄 Groq try: ${model}`);
+        const response = await tryGroqModel(model, userMessage, userId);
+        if (response) return response;
+    }
+
+    console.log('⚠️ Sare Groq models fail — OpenRouter try kar raha hai...');
+
+    // STEP 2: Sare OpenRouter models try karo
+    for (const model of OPENROUTER_MODELS) {
+        console.log(`🔄 OpenRouter try: ${model}`);
+        const response = await tryOpenRouterModel(model, userMessage, userId);
+        if (response) return response;
+    }
+
+    // STEP 3: Sab fail
+    console.log('❌ Sare models fail!');
+    return '⚠️ Abhi AI service thodi busy hai. 1-2 minute baad dobara try karo!';
 }
 
 // ─────────────────────────────────────────
@@ -185,14 +246,13 @@ async function getAIResponse(userMessage, userId) {
 // ─────────────────────────────────────────
 async function startBot() {
     try {
-        // ✅ KEY FIX 1: Latest WA version fetch karo automatically
         const { version, isLatest } = await fetchLatestBaileysVersion();
         console.log(`📱 WA Version: ${version.join('.')} — Latest: ${isLatest}`);
 
         const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_info');
 
         const sock = makeWASocket({
-            version,  // ✅ Hardcoded version nahi — latest fetch ki
+            version,
             auth: state,
             logger: pino({ level: 'silent' }),
             browser: Browsers.ubuntu('Chrome'),
@@ -203,7 +263,6 @@ async function startBot() {
             markOnlineOnConnect: false,
             generateHighQualityLinkPreview: false,
             qrTimeout: 60000,
-            // ✅ KEY FIX 2: Retry on failure
             retryRequestDelayMs: 2000,
             maxMsgRetryCount: 5,
             fireInitQueries: true,
@@ -226,19 +285,17 @@ async function startBot() {
                 const code = lastDisconnect?.error?.output?.statusCode;
                 console.log('❌ Connection band hua, code:', code);
 
-                // ✅ KEY FIX 3: 405 pe bhi reconnect karo
                 if (code === DisconnectReason.loggedOut) {
                     botStatus = 'logged_out';
-                    console.log('🚪 Logged out — /tmp/auth_info delete karke restart...');
-                    const fs = require('fs');
+                    console.log('🚪 Logged out — auth delete karke restart...');
                     try {
                         fs.rmSync('/tmp/auth_info', { recursive: true, force: true });
-                    } catch(e) {}
+                    } catch (e) {}
                     setTimeout(startBot, 5000);
                 } else {
                     botStatus = 'reconnecting';
                     const delay = code === 405 ? 15000 : 10000;
-                    console.log(`🔄 ${delay/1000} sec mein reconnect...`);
+                    console.log(`🔄 ${delay / 1000} sec mein reconnect...`);
                     setTimeout(startBot, delay);
                 }
             }
@@ -288,10 +345,10 @@ async function startBot() {
 
                     if (userMessage.toLowerCase() === '!provider') {
                         await sock.sendMessage(senderId, {
-                            text: `🧠 Provider: *${process.env.AI_PROVIDER}*\n` +
-                                  `📊 Model: *${process.env.AI_PROVIDER === 'openrouter'
-                                    ? 'Llama 3.1 8B (Free)'
-                                    : 'Llama 3 70B (Free)'}*`
+                            text: `🧠 Active Provider: *${process.env.AI_PROVIDER}*\n` +
+                                  `📊 Groq Models: *${GROQ_MODELS.length}*\n` +
+                                  `📊 OpenRouter Models: *${OPENROUTER_MODELS.length}*\n` +
+                                  `✅ Auto fallback: ON`
                         });
                         continue;
                     }
