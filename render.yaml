@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: whatsapp-ai-bot
+    env: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: groq
+      - key: BOT_NAME
+        value: MyAI Bot
