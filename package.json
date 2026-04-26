@@ -1,7 +1,6 @@
 {
   "name": "whatsapp-ai-bot",
   "version": "1.0.0",
-  "description": "WhatsApp AI Bot with Groq and OpenRouter",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,6 +10,7 @@
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "pino": "^8.17.0",
+    "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0"
   }
 }
