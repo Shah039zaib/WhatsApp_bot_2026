@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 const pino = require('pino');
 const http = require('http');
@@ -10,7 +10,7 @@ let botStatus = 'starting';
 const conversationHistory = {};
 
 // ─────────────────────────────────────────
-// WEB SERVER - QR Show Karne Ke Liye
+// WEB SERVER
 // ─────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
     if (req.url === '/qr') {
@@ -18,93 +18,75 @@ const server = http.createServer(async (req, res) => {
 
         if (botStatus === 'connected') {
             res.end(`
-                <html>
-                <head>
-                    <style>
-                        body{background:#111;color:white;display:flex;flex-direction:column;
-                        align-items:center;justify-content:center;min-height:100vh;
-                        font-family:sans-serif;text-align:center;}
-                        h2{color:#25D366;}
-                    </style>
-                </head>
+                <html><head><style>
+                body{background:#111;color:white;display:flex;flex-direction:column;
+                align-items:center;justify-content:center;min-height:100vh;
+                font-family:sans-serif;text-align:center;}
+                h2{color:#25D366;}
+                </style></head>
                 <body>
-                    <h2>✅ Bot Connected!</h2>
-                    <p>WhatsApp se successfully connect ho gaya!</p>
-                    <p>Ab apne bot ko message karo!</p>
-                </body>
-                </html>
+                <h2>✅ Bot Connected!</h2>
+                <p>WhatsApp se successfully connect ho gaya!</p>
+                <p>Ab apne bot ko message karo!</p>
+                </body></html>
             `);
             return;
         }
 
         if (!currentQR) {
             res.end(`
-                <html>
-                <head>
-                    <meta http-equiv="refresh" content="3">
-                    <style>
-                        body{background:#111;color:white;display:flex;flex-direction:column;
-                        align-items:center;justify-content:center;min-height:100vh;
-                        font-family:sans-serif;text-align:center;}
-                        h2{color:#f39c12;}
-                    </style>
-                </head>
+                <html><head>
+                <meta http-equiv="refresh" content="3">
+                <style>
+                body{background:#111;color:white;display:flex;flex-direction:column;
+                align-items:center;justify-content:center;min-height:100vh;
+                font-family:sans-serif;text-align:center;}
+                h2{color:#f39c12;}
+                </style></head>
                 <body>
-                    <h2>⏳ QR Generate Ho Raha Hai...</h2>
-                    <p>Status: ${botStatus}</p>
-                    <p>3 second mein auto refresh hoga</p>
-                </body>
-                </html>
+                <h2>⏳ QR Generate Ho Raha Hai...</h2>
+                <p>Status: ${botStatus}</p>
+                <p>3 second mein auto refresh hoga</p>
+                </body></html>
             `);
             return;
         }
 
         try {
-            const qrDataURL = await QRCode.toDataURL(currentQR, {
-                width: 300,
-                margin: 2
-            });
+            const qrDataURL = await QRCode.toDataURL(currentQR, { width: 300, margin: 2 });
             res.end(`
-                <html>
-                <head>
-                    <meta http-equiv="refresh" content="30">
-                    <style>
-                        body{background:#111;color:white;display:flex;flex-direction:column;
-                        align-items:center;justify-content:center;min-height:100vh;
-                        font-family:sans-serif;text-align:center;padding:20px;}
-                        h2{color:#25D366;}
-                        img{border:8px solid white;border-radius:12px;width:280px;height:280px;}
-                        .steps{background:#222;padding:15px;border-radius:10px;
-                        text-align:left;max-width:320px;margin-top:15px;}
-                        p{color:#aaa;max-width:300px;}
-                    </style>
-                </head>
+                <html><head>
+                <meta http-equiv="refresh" content="25">
+                <style>
+                body{background:#111;color:white;display:flex;flex-direction:column;
+                align-items:center;justify-content:center;min-height:100vh;
+                font-family:sans-serif;text-align:center;padding:20px;}
+                h2{color:#25D366;}
+                img{border:8px solid white;border-radius:12px;width:280px;height:280px;}
+                .steps{background:#222;padding:15px;border-radius:10px;
+                text-align:left;max-width:320px;margin-top:15px;}
+                p{color:#aaa;max-width:300px;}
+                </style></head>
                 <body>
-                    <h2>📱 WhatsApp QR Code</h2>
-                    <img src="${qrDataURL}" alt="QR Code"/>
-                    <div class="steps">
-                        <p>1️⃣ WhatsApp kholo</p>
-                        <p>2️⃣ 3 dots menu → Linked Devices</p>
-                        <p>3️⃣ Link a Device tap karo</p>
-                        <p>4️⃣ Yeh QR scan karo</p>
-                    </div>
-                    <p style="color:#f39c12;margin-top:15px">
-                        ⚠️ QR 30 sec mein expire hoga — jaldi scan karo!
-                    </p>
-                </body>
-                </html>
+                <h2>📱 WhatsApp QR Code</h2>
+                <img src="${qrDataURL}" alt="QR Code"/>
+                <div class="steps">
+                    <p>1️⃣ WhatsApp kholo</p>
+                    <p>2️⃣ 3 dots menu → Linked Devices</p>
+                    <p>3️⃣ Link a Device tap karo</p>
+                    <p>4️⃣ Yeh QR scan karo</p>
+                </div>
+                <p style="color:#f39c12;margin-top:15px">
+                    ⚠️ QR 25 sec mein expire hoga — jaldi scan karo!
+                </p>
+                </body></html>
             `);
         } catch (err) {
             res.end('<h1 style="color:red">QR Error: ' + err.message + '</h1>');
         }
-
     } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            status: botStatus,
-            hasQR: !!currentQR,
-            qrUrl: '/qr'
-        }));
+        res.end(JSON.stringify({ status: botStatus, hasQR: !!currentQR, qrUrl: '/qr' }));
     }
 });
 
@@ -123,7 +105,6 @@ async function getGroqResponse(userMessage, userId) {
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
         }
-
         const response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
@@ -145,11 +126,9 @@ async function getGroqResponse(userMessage, userId) {
                 }
             }
         );
-
         const assistantMessage = response.data.choices[0].message.content;
         conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
         return assistantMessage;
-
     } catch (error) {
         console.error('Groq Error:', error.response?.data || error.message);
         return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
@@ -163,7 +142,6 @@ async function getOpenRouterResponse(userMessage, userId) {
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
         }
-
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
@@ -187,11 +165,9 @@ async function getOpenRouterResponse(userMessage, userId) {
                 }
             }
         );
-
         const assistantMessage = response.data.choices[0].message.content;
         conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
         return assistantMessage;
-
     } catch (error) {
         console.error('OpenRouter Error:', error.response?.data || error.message);
         return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
@@ -205,23 +181,33 @@ async function getAIResponse(userMessage, userId) {
 }
 
 // ─────────────────────────────────────────
-// WHATSAPP BOT
+// WHATSAPP BOT — STRONG LOGIC
 // ─────────────────────────────────────────
 async function startBot() {
     try {
+        // ✅ KEY FIX 1: Latest WA version fetch karo automatically
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`📱 WA Version: ${version.join('.')} — Latest: ${isLatest}`);
+
         const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_info');
 
         const sock = makeWASocket({
+            version,  // ✅ Hardcoded version nahi — latest fetch ki
             auth: state,
             logger: pino({ level: 'silent' }),
-            browser: Browsers.ubuntu('WhatsApp Bot'),
+            browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
             keepAliveIntervalMs: 30000,
             emitOwnEvents: false,
             markOnlineOnConnect: false,
             generateHighQualityLinkPreview: false,
-            qrTimeout: 60000
+            qrTimeout: 60000,
+            // ✅ KEY FIX 2: Retry on failure
+            retryRequestDelayMs: 2000,
+            maxMsgRetryCount: 5,
+            fireInitQueries: true,
+            syncFullHistory: false
         });
 
         sock.ev.on('creds.update', saveCreds);
@@ -232,18 +218,28 @@ async function startBot() {
             if (qr) {
                 currentQR = qr;
                 botStatus = 'qr_ready';
-                console.log('✅ QR ready! /qr page pe jao scan karne ke liye!');
+                console.log('✅ QR ready! /qr page pe jao!');
             }
 
             if (connection === 'close') {
                 currentQR = null;
                 const code = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = code !== DisconnectReason.loggedOut;
-                botStatus = shouldReconnect ? 'reconnecting' : 'logged_out';
                 console.log('❌ Connection band hua, code:', code);
-                if (shouldReconnect) {
-                    console.log('🔄 10 second mein reconnect...');
-                    setTimeout(startBot, 10000);
+
+                // ✅ KEY FIX 3: 405 pe bhi reconnect karo
+                if (code === DisconnectReason.loggedOut) {
+                    botStatus = 'logged_out';
+                    console.log('🚪 Logged out — /tmp/auth_info delete karke restart...');
+                    const fs = require('fs');
+                    try {
+                        fs.rmSync('/tmp/auth_info', { recursive: true, force: true });
+                    } catch(e) {}
+                    setTimeout(startBot, 5000);
+                } else {
+                    botStatus = 'reconnecting';
+                    const delay = code === 405 ? 15000 : 10000;
+                    console.log(`🔄 ${delay/1000} sec mein reconnect...`);
+                    setTimeout(startBot, delay);
                 }
             }
 
@@ -283,9 +279,9 @@ async function startBot() {
                         await sock.sendMessage(senderId, {
                             text: `🤖 *${process.env.BOT_NAME}*\n\n` +
                                   `• Koi bhi sawaal pucho\n` +
-                                  `• *!reset* - Conversation clear karo\n` +
+                                  `• *!reset* - Conversation clear\n` +
                                   `• *!help* - Help dekho\n` +
-                                  `• *!provider* - AI info dekho`
+                                  `• *!provider* - AI info`
                         });
                         continue;
                     }
@@ -293,8 +289,8 @@ async function startBot() {
                     if (userMessage.toLowerCase() === '!provider') {
                         await sock.sendMessage(senderId, {
                             text: `🧠 Provider: *${process.env.AI_PROVIDER}*\n` +
-                                  `📊 Model: *${process.env.AI_PROVIDER === 'openrouter' 
-                                    ? 'Llama 3.1 8B (Free)' 
+                                  `📊 Model: *${process.env.AI_PROVIDER === 'openrouter'
+                                    ? 'Llama 3.1 8B (Free)'
                                     : 'Llama 3 70B (Free)'}*`
                         });
                         continue;
@@ -313,8 +309,8 @@ async function startBot() {
         });
 
     } catch (err) {
-        console.error('Bot start error:', err);
-        console.log('🔄 15 second mein restart...');
+        console.error('Bot start error:', err.message);
+        console.log('🔄 15 sec mein restart...');
         setTimeout(startBot, 15000);
     }
 }
