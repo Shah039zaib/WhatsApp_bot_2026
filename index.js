@@ -1,31 +1,115 @@
 require('dotenv').config();
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const axios = require('axios');
-const qrcode = require('qrcode-terminal');
 const pino = require('pino');
+const http = require('http');
+const fs = require('fs');
+const qrcode = require('qrcode');
 
-// ─────────────────────────────────────────
-// AI PROVIDER FUNCTIONS
-// ─────────────────────────────────────────
-
-// Conversation history store karne ke liye
+// Global QR store
+let currentQR = null;
+let botStatus = 'waiting';
 const conversationHistory = {};
 
-// Groq AI se response lena
+// ─────────────────────────────────────────
+// WEB SERVER - QR Show Karne Ke Liye
+// ─────────────────────────────────────────
+const server = http.createServer(async (req, res) => {
+    if (req.url === '/qr') {
+        if (currentQR) {
+            try {
+                const qrImage = await qrcode.toDataURL(currentQR);
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(`
+                    <html>
+                    <head>
+                        <title>WhatsApp Bot QR</title>
+                        <meta http-equiv="refresh" content="10">
+                        <style>
+                            body { 
+                                display:flex; 
+                                flex-direction:column;
+                                align-items:center; 
+                                justify-content:center;
+                                min-height:100vh;
+                                margin:0;
+                                background:#111;
+                                color:white;
+                                font-family:sans-serif;
+                            }
+                            img { 
+                                width:300px; 
+                                height:300px;
+                                border:10px solid white;
+                                border-radius:10px;
+                            }
+                            h2 { color:#25D366; }
+                            p { color:#aaa; }
+                        </style>
+                    </head>
+                    <body>
+                        <h2>📱 WhatsApp Bot QR Code</h2>
+                        <img src="${qrImage}" alt="QR Code"/>
+                        <p>WhatsApp → Linked Devices → Link a Device → Scan karo</p>
+                        <p style="color:#f39c12">Page har 10 second mein refresh hoga</p>
+                    </body>
+                    </html>
+                `);
+            } catch (e) {
+                res.writeHead(500);
+                res.end('QR generate karne mein error');
+            }
+        } else {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+                <html>
+                <head>
+                    <meta http-equiv="refresh" content="5">
+                    <style>
+                        body {
+                            display:flex;
+                            flex-direction:column;
+                            align-items:center;
+                            justify-content:center;
+                            min-height:100vh;
+                            margin:0;
+                            background:#111;
+                            color:white;
+                            font-family:sans-serif;
+                        }
+                        h2 { color:#25D366; }
+                    </style>
+                </head>
+                <body>
+                    <h2>⏳ Bot Status: ${botStatus}</h2>
+                    <p>${botStatus === 'connected' ? '✅ WhatsApp se connect ho gaya!' : '🔄 QR generate ho raha hai... 5 second mein refresh hoga'}</p>
+                </body>
+                </html>
+            `);
+        }
+    } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+            status: botStatus,
+            message: botStatus === 'connected' ? 'Bot is running!' : 'Visit /qr to scan QR code'
+        }));
+    }
+});
+
+server.listen(process.env.PORT || 3000, () => {
+    console.log(`🌐 Web server chalu hai`);
+    console.log(`📱 QR dekhne ke liye /qr page kholo Render URL pe`);
+});
+
+// ─────────────────────────────────────────
+// AI FUNCTIONS
+// ─────────────────────────────────────────
 async function getGroqResponse(userMessage, userId) {
     try {
-        // User ki history initialize karo
-        if (!conversationHistory[userId]) {
-            conversationHistory[userId] = [];
-        }
+        if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
-        // User message history mein add karo
-        conversationHistory[userId].push({
-            role: 'user',
-            content: userMessage
-        });
+        conversationHistory[userId].push({ role: 'user', content: userMessage });
 
-        // Last 10 messages rakho memory mein
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
         }
@@ -37,7 +121,7 @@ async function getGroqResponse(userMessage, userId) {
                 messages: [
                     {
                         role: 'system',
-                        content: `Tum ek helpful AI assistant ho jiska naam ${process.env.BOT_NAME} hai. Tum WhatsApp pe log ki madad karte ho. Short aur clear replies do.`
+                        content: `Tum ek helpful AI assistant ho jiska naam ${process.env.BOT_NAME} hai. Short aur clear replies do.`
                     },
                     ...conversationHistory[userId]
                 ],
@@ -53,32 +137,20 @@ async function getGroqResponse(userMessage, userId) {
         );
 
         const assistantMessage = response.data.choices[0].message.content;
-
-        // Assistant reply bhi history mein add karo
-        conversationHistory[userId].push({
-            role: 'assistant',
-            content: assistantMessage
-        });
-
+        conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
         return assistantMessage;
 
     } catch (error) {
         console.error('Groq Error:', error.response?.data || error.message);
-        return '❌ Groq AI se connect nahi ho saka. Thodi der baad try karo.';
+        return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
     }
 }
 
-// OpenRouter AI se response lena
 async function getOpenRouterResponse(userMessage, userId) {
     try {
-        if (!conversationHistory[userId]) {
-            conversationHistory[userId] = [];
-        }
+        if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
-        conversationHistory[userId].push({
-            role: 'user',
-            content: userMessage
-        });
+        conversationHistory[userId].push({ role: 'user', content: userMessage });
 
         if (conversationHistory[userId].length > 20) {
             conversationHistory[userId] = conversationHistory[userId].slice(-20);
@@ -87,12 +159,11 @@ async function getOpenRouterResponse(userMessage, userId) {
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                // Free model - OpenRouter pe available
                 model: 'meta-llama/llama-3.1-8b-instruct:free',
                 messages: [
                     {
                         role: 'system',
-                        content: `Tum ek helpful AI assistant ho jiska naam ${process.env.BOT_NAME} hai. Tum WhatsApp pe log ki madad karte ho. Short aur clear replies do.`
+                        content: `Tum ek helpful AI assistant ho jiska naam ${process.env.BOT_NAME} hai. Short aur clear replies do.`
                     },
                     ...conversationHistory[userId]
                 ],
@@ -110,157 +181,116 @@ async function getOpenRouterResponse(userMessage, userId) {
         );
 
         const assistantMessage = response.data.choices[0].message.content;
-
-        conversationHistory[userId].push({
-            role: 'assistant',
-            content: assistantMessage
-        });
-
+        conversationHistory[userId].push({ role: 'assistant', content: assistantMessage });
         return assistantMessage;
 
     } catch (error) {
         console.error('OpenRouter Error:', error.response?.data || error.message);
-        return '❌ OpenRouter AI se connect nahi ho saka. Thodi der baad try karo.';
+        return '❌ AI se connect nahi ho saka. Thodi der baad try karo.';
     }
 }
 
-// Main AI function - provider ke hisaab se call karo
 async function getAIResponse(userMessage, userId) {
     const provider = process.env.AI_PROVIDER || 'groq';
-
     if (provider === 'openrouter') {
         return await getOpenRouterResponse(userMessage, userId);
-    } else {
-        return await getGroqResponse(userMessage, userId);
     }
+    return await getGroqResponse(userMessage, userId);
 }
 
 // ─────────────────────────────────────────
 // WHATSAPP BOT
 // ─────────────────────────────────────────
-
 async function startBot() {
-    // Auth state save karna
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
-    // Socket banao
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
+        printQRInTerminal: true,
         logger: pino({ level: 'silent' })
     });
 
-    // Credentials save karo
     sock.ev.on('creds.update', saveCreds);
 
-    // Connection handle karo
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // QR code show karo
         if (qr) {
-            console.log('\n📱 WhatsApp se connect karne ke liye QR scan karo:\n');
-            qrcode.generate(qr, { small: true });
-            console.log('\n⏳ QR scan karo apne WhatsApp se...\n');
+            currentQR = qr;
+            botStatus = 'qr_ready';
+            console.log('📱 QR ready! Render URL ke baad /qr lagao aur scan karo');
         }
 
         if (connection === 'close') {
+            currentQR = null;
+            botStatus = 'reconnecting';
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
             console.log('❌ Connection band hua. Reconnect:', shouldReconnect);
-
             if (shouldReconnect) {
-                console.log('🔄 5 second mein reconnect ho raha hai...');
                 setTimeout(startBot, 5000);
-            } else {
-                console.log('🚪 Logged out. Auth folder delete karo aur dobara run karo.');
             }
         }
 
         if (connection === 'open') {
-            console.log('✅ WhatsApp se successfully connect ho gaya!');
-            console.log(`🤖 Bot Name: ${process.env.BOT_NAME}`);
-            console.log(`🧠 AI Provider: ${process.env.AI_PROVIDER}`);
-            console.log('📨 Messages sun raha hai...\n');
+            currentQR = null;
+            botStatus = 'connected';
+            console.log('✅ WhatsApp se connect ho gaya!');
+            console.log(`🤖 Bot: ${process.env.BOT_NAME}`);
+            console.log(`🧠 AI: ${process.env.AI_PROVIDER}`);
         }
     });
 
-    // Messages handle karo
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
 
         for (const message of messages) {
             try {
-                // Apne messages ignore karo
                 if (message.key.fromMe) continue;
 
-                // Message text nikalo
                 const userMessage =
                     message.message?.conversation ||
-                    message.message?.extendedTextMessage?.text ||
-                    '';
+                    message.message?.extendedTextMessage?.text || '';
 
-                // Empty message ignore karo
                 if (!userMessage.trim()) continue;
 
-                // Sender ID nikalo
                 const senderId = message.key.remoteJid;
                 const senderName = message.pushName || 'User';
 
-                console.log(`📩 Message from ${senderName}: ${userMessage}`);
+                console.log(`📩 ${senderName}: ${userMessage}`);
 
-                // Special commands handle karo
                 if (userMessage.toLowerCase() === '!reset') {
                     conversationHistory[senderId] = [];
-                    await sock.sendMessage(senderId, {
-                        text: '🔄 Conversation reset ho gayi! Ab nayi baat shuru karo.'
-                    });
+                    await sock.sendMessage(senderId, { text: '🔄 Conversation reset!' });
                     continue;
                 }
 
                 if (userMessage.toLowerCase() === '!help') {
                     await sock.sendMessage(senderId, {
-                        text: `🤖 *${process.env.BOT_NAME} Help*\n\n` +
-                              `• Koi bhi sawaal pucho — AI jawab dega\n` +
-                              `• *!reset* — Conversation clear karo\n` +
-                              `• *!provider* — Current AI provider dekho\n` +
-                              `• *!help* — Yeh message dekho\n\n` +
-                              `_Powered by ${process.env.AI_PROVIDER === 'openrouter' ? 'OpenRouter' : 'Groq'} AI_`
+                        text: `🤖 *${process.env.BOT_NAME}*\n\n• Koi bhi sawaal pucho\n• *!reset* - Conversation clear\n• *!help* - Help\n• *!provider* - AI info`
                     });
                     continue;
                 }
 
                 if (userMessage.toLowerCase() === '!provider') {
                     await sock.sendMessage(senderId, {
-                        text: `🧠 Current AI Provider: *${process.env.AI_PROVIDER}*\n` +
-                              `📊 Model: *${process.env.AI_PROVIDER === 'openrouter' ? 'Llama 3.1 8B (Free)' : 'Llama 3 70B (Free)'}*`
+                        text: `🧠 Provider: *${process.env.AI_PROVIDER}*`
                     });
                     continue;
                 }
 
-                // Typing indicator show karo
                 await sock.sendPresenceUpdate('composing', senderId);
-
-                // AI se response lo
                 const aiResponse = await getAIResponse(userMessage, senderId);
-
-                // Typing band karo
                 await sock.sendPresenceUpdate('paused', senderId);
 
-                // Reply bhejo
-                await sock.sendMessage(senderId, {
-                    text: aiResponse
-                }, { quoted: message });
-
+                await sock.sendMessage(senderId, { text: aiResponse }, { quoted: message });
                 console.log(`✅ Reply sent to ${senderName}`);
 
             } catch (error) {
-                console.error('Message handle karne mein error:', error);
+                console.error('Error:', error);
             }
         }
     });
 }
 
-// Bot start karo
 console.log('🚀 WhatsApp AI Bot start ho raha hai...');
 startBot();
