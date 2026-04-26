@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, Browsers } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 const pino = require('pino');
 const http = require('http');
@@ -10,7 +10,7 @@ let botStatus = 'starting';
 const conversationHistory = {};
 
 // ─────────────────────────────────────────
-// WEB SERVER
+// WEB SERVER - QR Show Karne Ke Liye
 // ─────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
     if (req.url === '/qr') {
@@ -60,9 +60,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         try {
-            const qrDataURL = await QRCode.toDataURL(currentQR, { 
+            const qrDataURL = await QRCode.toDataURL(currentQR, {
                 width: 300,
-                margin: 2 
+                margin: 2
             });
             res.end(`
                 <html>
@@ -74,9 +74,9 @@ const server = http.createServer(async (req, res) => {
                         font-family:sans-serif;text-align:center;padding:20px;}
                         h2{color:#25D366;}
                         img{border:8px solid white;border-radius:12px;width:280px;height:280px;}
-                        p{color:#aaa;max-width:300px;}
                         .steps{background:#222;padding:15px;border-radius:10px;
                         text-align:left;max-width:320px;margin-top:15px;}
+                        p{color:#aaa;max-width:300px;}
                     </style>
                 </head>
                 <body>
@@ -84,11 +84,13 @@ const server = http.createServer(async (req, res) => {
                     <img src="${qrDataURL}" alt="QR Code"/>
                     <div class="steps">
                         <p>1️⃣ WhatsApp kholo</p>
-                        <p>2️⃣ 3 dots → Linked Devices</p>
+                        <p>2️⃣ 3 dots menu → Linked Devices</p>
                         <p>3️⃣ Link a Device tap karo</p>
                         <p>4️⃣ Yeh QR scan karo</p>
                     </div>
-                    <p style="color:#f39c12;margin-top:15px">⚠️ QR 30 sec mein expire hoga — jaldi scan karo!</p>
+                    <p style="color:#f39c12;margin-top:15px">
+                        ⚠️ QR 30 sec mein expire hoga — jaldi scan karo!
+                    </p>
                 </body>
                 </html>
             `);
@@ -98,7 +100,7 @@ const server = http.createServer(async (req, res) => {
 
     } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
+        res.end(JSON.stringify({
             status: botStatus,
             hasQR: !!currentQR,
             qrUrl: '/qr'
@@ -212,12 +214,14 @@ async function startBot() {
         const sock = makeWASocket({
             auth: state,
             logger: pino({ level: 'silent' }),
-            browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
+            browser: Browsers.ubuntu('WhatsApp Bot'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
+            keepAliveIntervalMs: 30000,
             emitOwnEvents: false,
-            markOnlineOnConnect: false
+            markOnlineOnConnect: false,
+            generateHighQualityLinkPreview: false,
+            qrTimeout: 60000
         });
 
         sock.ev.on('creds.update', saveCreds);
@@ -277,14 +281,21 @@ async function startBot() {
 
                     if (userMessage.toLowerCase() === '!help') {
                         await sock.sendMessage(senderId, {
-                            text: `🤖 *${process.env.BOT_NAME}*\n\n• Koi bhi sawaal pucho\n• *!reset* - Conversation clear\n• *!help* - Help dekho\n• *!provider* - AI info`
+                            text: `🤖 *${process.env.BOT_NAME}*\n\n` +
+                                  `• Koi bhi sawaal pucho\n` +
+                                  `• *!reset* - Conversation clear karo\n` +
+                                  `• *!help* - Help dekho\n` +
+                                  `• *!provider* - AI info dekho`
                         });
                         continue;
                     }
 
                     if (userMessage.toLowerCase() === '!provider') {
                         await sock.sendMessage(senderId, {
-                            text: `🧠 Provider: *${process.env.AI_PROVIDER}*`
+                            text: `🧠 Provider: *${process.env.AI_PROVIDER}*\n` +
+                                  `📊 Model: *${process.env.AI_PROVIDER === 'openrouter' 
+                                    ? 'Llama 3.1 8B (Free)' 
+                                    : 'Llama 3 70B (Free)'}*`
                         });
                         continue;
                     }
@@ -303,7 +314,8 @@ async function startBot() {
 
     } catch (err) {
         console.error('Bot start error:', err);
-        setTimeout(startBot, 10000);
+        console.log('🔄 15 second mein restart...');
+        setTimeout(startBot, 15000);
     }
 }
 
